@@ -36,7 +36,7 @@ def initialize_llm():
     """Initialize the Language Model and QA chain"""
     llm = ChatGroq(
         model_name="llama3-8b-8192",
-        api_key=st.secrets["GROQ_API_KEY"]
+        api_key='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'
     )
     return llm
 
