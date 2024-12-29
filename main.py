@@ -2,6 +2,7 @@ import streamlit as st
 import time
 import os
 import textwrap
+from pathlib import Path
 from langchain_groq import ChatGroq
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
@@ -14,6 +15,31 @@ st.set_page_config(
     page_icon="🕉️",
     layout="wide"
 )
+
+# Path Configuration
+def get_db_path():
+    """Configure the database path"""
+    # Option 1: Environment variable
+    db_path = os.getenv("FAISS_DB_PATH")
+    
+    # Option 2: Streamlit secrets
+    if not db_path and 'FAISS_DB_PATH' in st.secrets:
+        db_path = st.secrets["FAISS_DB_PATH"]
+    
+    # Option 3: Default path (current directory)
+    if not db_path:
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db_faiss")
+    
+    # Validate path exists
+    if not os.path.exists(db_path):
+        st.error(f"Database path not found: {db_path}")
+        st.info("Please set the correct path using one of these methods:\n"
+                "1. Environment variable: FAISS_DB_PATH\n"
+                "2. Streamlit secrets.toml: FAISS_DB_PATH\n"
+                "3. Place db_faiss folder in the same directory as main.py")
+        st.stop()
+    
+    return db_path
 
 # Custom CSS
 st.markdown("""
@@ -33,10 +59,10 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
 def initialize_llm():
-    """Initialize the Language Model and QA chain"""
+    """Initialize the Language Model"""
     llm = ChatGroq(
         model_name="llama3-8b-8192",
-        api_key='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'
+        api_key=st.secrets["GROQ_API_KEY"]
     )
     return llm
 
@@ -66,15 +92,20 @@ def load_qa_chain():
     )
     
     embeddings = get_embeddings()
-    db = FAISS.load_local("db_faiss", embeddings, allow_dangerous_deserialization=True)
+    db_path = get_db_path()
     
-    return RetrievalQA.from_chain_type(
-        llm=initialize_llm(),
-        chain_type='stuff',
-        retriever=db.as_retriever(search_kwargs={'k': 5}),
-        return_source_documents=True,
-        chain_type_kwargs={'prompt': PROMPT}
-    )
+    try:
+        db = FAISS.load_local(db_path, embeddings, allow_dangerous_deserialization=True)
+        return RetrievalQA.from_chain_type(
+            llm=initialize_llm(),
+            chain_type='stuff',
+            retriever=db.as_retriever(search_kwargs={'k': 5}),
+            return_source_documents=True,
+            chain_type_kwargs={'prompt': PROMPT}
+        )
+    except Exception as e:
+        st.error(f"Error loading database: {str(e)}")
+        st.stop()
 
 def process_answer(response):
     """Process the LLM response and format it nicely"""
@@ -85,14 +116,12 @@ def process_answer(response):
 def main():
     # Header
     st.title("🕉️ Bhagavad Gita AI Assistant")
-    st.markdown("""
-    Welcome to the Bhagavad Gita AI Assistant! Ask any question about the Gita's teachings, 
-    philosophy, or specific verses. The assistant uses advanced AI to provide accurate answers 
-    based on the sacred text.
-    """)
     
-    # Sidebar
+    # Display current database path in sidebar
     with st.sidebar:
+        st.header("📁 Database Info")
+        st.text(f"Current DB Path:\n{get_db_path()}")
+        
         st.header("📚 Sample Questions")
         sample_questions = [
             "What is karma yoga according to the Gita?",
@@ -105,6 +134,11 @@ def main():
             if st.button(q):
                 st.session_state.user_input = q
 
+    st.markdown("""
+    Welcome to the Bhagavad Gita AI Assistant! Ask any question about the Gita's teachings, 
+    philosophy, or specific verses.
+    """)
+    
     # Main chat interface
     chat_container = st.container()
     
@@ -125,20 +159,12 @@ def main():
     if user_input:
         with st.spinner("Consulting the ancient wisdom... 🕉️"):
             try:
-                # Record start time
                 start_time = time.time()
-                
-                # Initialize QA chain
                 qa_chain = load_qa_chain()
-                
-                # Get response
                 response = qa_chain({"query": user_input})
                 answer, sources = process_answer(response)
-                
-                # Calculate response time
                 response_time = round(time.time() - start_time, 1)
                 
-                # Add to chat history
                 st.session_state.chat_history.append({"role": "user", "content": user_input})
                 st.session_state.chat_history.append({
                     "role": "assistant", 
@@ -146,13 +172,8 @@ def main():
                     "sources": sources
                 })
                 
-                # Clear input
                 st.session_state.user_input = ""
-                
-                # Show response time
                 st.caption(f"Response time: {response_time}s")
-                
-                # Rerun to update chat
                 st.rerun()
                 
             except Exception as e:
